@@ -1,12 +1,35 @@
 import {createElement as h, useState, useRef, useCallback, useEffect} from 'react';
 import {host, Button, Codicon, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA} from '@hermes/plugin-sdk';
 
-// Hermes Newsroom runs locally as the omarchy-command-center user service.
-// This plugin only frames that page; it holds no data and calls no backend.
+// Frames the Hermes Newsroom app (github.com/BkashJEE/hermes-newsroom) running on
+// this machine. The plugin holds no data and calls no backend of its own.
 export const PAGE_PATH = '/newsroom';
 export const NEWSROOM_URL = 'http://127.0.0.1:3520/newsroom';
-export const NEWSROOM_ORIGIN = 'http://127.0.0.1:3520';
-const SERVICE = 'omarchy-command-center.service';
+export const SETTING = 'hermes-newsroom:url';
+
+/** Read the configured address. A framed page is same-origin-privileged, so only
+ *  a loopback http(s) address is accepted; anything else falls back to the default. */
+export function newsroomUrl(store = globalThis.localStorage) {
+  let raw;
+  try {
+    raw = typeof store?.getItem === 'function' ? store.getItem(SETTING) : store?.[SETTING];
+  } catch {
+    return NEWSROOM_URL;                     // private mode, blocked storage
+  }
+  if (!raw) return NEWSROOM_URL;
+  try {
+    const url = new URL(raw);
+    const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
+    return /^https?:$/.test(url.protocol) && loopback ? url.href : NEWSROOM_URL;
+  } catch {
+    return NEWSROOM_URL;
+  }
+}
+
+/** The origin to post the theme to, derived from whichever address is in use. */
+export function newsroomOrigin(url) {
+  return new URL(url).origin;
+}
 
 // Newsroom token -> the Hermes variable it follows.
 const THEME = /** @type {const} */ ({
@@ -65,10 +88,10 @@ export function themedUrl(theme, url = NEWSROOM_URL) {
   return `${url}?${params.toString()}`;
 }
 
-/** @param {{url?:string}} props */
-export function NewsroomPage({url = NEWSROOM_URL}) {
+/** @param {{url?:string,failed?:boolean}} props */
+export function NewsroomPage({url = newsroomUrl(), failed: initiallyFailed = false}) {
   const [nonce, setNonce] = useState(0);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(initiallyFailed);
   const frame = useRef(/** @type {HTMLIFrameElement|null} */ (null));
   // Theme only on (re)mount: the src must not change underneath a live page.
   const [src] = useState(() => themedUrl(hermesTheme(), url));
@@ -89,7 +112,7 @@ export function NewsroomPage({url = NEWSROOM_URL}) {
     let timer = 0;
     const push = () => {
       const target = frame.current?.contentWindow;
-      if (target) target.postMessage({type: 'hermes-theme', theme: hermesTheme(doc)}, NEWSROOM_ORIGIN);
+      if (target) target.postMessage({type: 'hermes-theme', theme: hermesTheme(doc)}, newsroomOrigin(url));
     };
     const schedule = () => {
       clearTimeout(timer);
@@ -105,9 +128,14 @@ export function NewsroomPage({url = NEWSROOM_URL}) {
   return h('div', {style: {display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--ui-bg-base)'}},
     failed
       ? h('div', {role: 'alert', style: {padding: '18px 16px', fontSize: '13px', lineHeight: 1.6, color: 'var(--ui-text-primary)'}},
-          h('p', {style: {margin: '0 0 6px'}}, 'Newsroom could not be loaded.'),
-          h('p', {style: {margin: '0 0 6px'}}, `It is served locally by ${SERVICE}. Start or check it, then press Reload.`),
-          h('pre', {style: {margin: '0 0 10px', fontFamily: 'ui-monospace, monospace', fontSize: '12px'}}, `systemctl --user status ${SERVICE}`),
+          h('p', {style: {margin: '0 0 6px', fontWeight: 600}}, `Nothing is serving Newsroom at ${url}.`),
+          h('p', {style: {margin: '0 0 6px'}}, 'Newsroom is a separate local app. Install and start it once, on Linux, macOS or Windows:'),
+          h('pre', {style: {margin: '0 0 10px', fontFamily: 'ui-monospace, monospace', fontSize: '12px', whiteSpace: 'pre-wrap'}},
+            'git clone https://github.com/BkashJEE/hermes-newsroom\ncd hermes-newsroom\nnpm ci\nnpm run build\nnpm start'),
+          h('p', {style: {margin: '0 0 6px', fontSize: '12px'}},
+            'To keep it running: a systemd user service on Linux, a launchd agent on macOS, or Task Scheduler on Windows.'),
+          h('p', {style: {margin: '0 0 10px', fontSize: '12px'}},
+            `Using a different port? Set ${SETTING} in this window's local storage to that address, then Reload.`),
           h(Button, {variant: 'outline', size: 'sm', onClick: reload}, 'Reload'))
       : h('iframe', {
           key: nonce,

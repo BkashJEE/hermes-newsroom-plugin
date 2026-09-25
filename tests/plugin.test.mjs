@@ -48,3 +48,29 @@ test('a document without Hermes tokens yields no theme and a plain embed url', (
   assert.ok(!theme.bg && !theme.accent);
   assert.equal(themedUrl({}), NEWSROOM_URL + '?embed=hermes');
 });
+
+test('the address is configurable, and only a loopback one is accepted', async () => {
+  const {newsroomUrl} = await import('../desktop/plugin.js');
+  // Default when nothing is configured.
+  assert.equal(newsroomUrl({}), NEWSROOM_URL);
+  // A different port is what most people will need.
+  assert.equal(newsroomUrl({'hermes-newsroom:url': 'http://127.0.0.1:3000/newsroom'}),
+    'http://127.0.0.1:3000/newsroom');
+  assert.equal(newsroomUrl({'hermes-newsroom:url': 'http://localhost:8080/newsroom'}),
+    'http://localhost:8080/newsroom');
+  // A frame is same-origin-privileged here: never point it off this machine.
+  for (const bad of ['https://evil.test/newsroom', 'http://10.0.0.5:3520/newsroom',
+                     'javascript:alert(1)', 'file:///etc/passwd', 'not a url']) {
+    assert.equal(newsroomUrl({'hermes-newsroom:url': bad}), NEWSROOM_URL, bad);
+  }
+});
+
+test('setup guidance names every platform, not just systemd', async () => {
+  const html = renderToStaticMarkup(h(NewsroomPage, {url: 'http://127.0.0.1:9/newsroom', failed: true}));
+  assert.match(html, /npm ci/);
+  assert.match(html, /npm run build/);
+  assert.match(html, /npm start/);
+  assert.match(html, /hermes-newsroom/);
+  assert.match(html, /macOS|Windows/);
+  assert.doesNotMatch(html, /omarchy-command-center\.service/);
+});

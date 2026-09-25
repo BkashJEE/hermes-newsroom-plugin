@@ -11,5 +11,11 @@
     "jsdom": "^30.1.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
+  },
+  "license": "Apache-2.0",
+  "description": "Opens Hermes Newsroom inside the Hermes Desktop app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BkashJEE/hermes-newsroom-plugin"
   }
 }
