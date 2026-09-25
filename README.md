@@ -9,6 +9,21 @@ frames the Newsroom app running on your own machine.
 
 ## Install
 
+You do not have to install this repository by hand. The app it frames ships an
+install skill and a cross-platform installer that fetch this file for you:
+
+> Install Hermes Newsroom from github.com/BkashJEE/hermes-newsroom
+
+Or, from a clone of the app:
+
+```sh
+npm run setup            # builds the app, installs this plugin, verifies
+```
+
+Then restart the Hermes Desktop app. That is the whole install.
+
+### By hand
+
 **1. Run Newsroom itself.** The plugin shows a page; this is the app behind it.
 
 ```sh
@@ -20,8 +35,8 @@ npm start          # serves http://127.0.0.1:3520
 ```
 
 Works on Linux, macOS and Windows — it is a Node app. To keep it running after a
-reboot, use whatever your system already has: a systemd user service on Linux, a
-launchd agent on macOS, Task Scheduler on Windows.
+reboot, use `node scripts/install.mjs --autostart` in that repo, which writes a
+systemd user unit, a launchd agent or a Startup entry depending on the platform.
 
 **2. Install the plugin.** Copy the single file into the Hermes desktop plugin
 directory, naming the folder after the plugin:
