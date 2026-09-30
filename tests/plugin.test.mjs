@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {createElement as h} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as jsdom from 'jsdom';
-import plugin, {NewsroomPage, NEWSROOM_URL, PAGE_PATH, hermesTheme, themedUrl} from '../desktop/plugin.js';
+import plugin, {NewsroomPage, NEWSROOM_URL, PAGE_PATH, SETTING, ALLOW_SETTING, hermesTheme, themedUrl,
+  newsroomUrl, resolveNewsroomUrl, refusalText} from '../desktop/plugin.js';
 import {ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA} from './sdk.mjs';
 
 test('registers a page, sidebar entry, status-bar launcher and palette command', () => {
@@ -49,8 +50,7 @@ test('a document without Hermes tokens yields no theme and a plain embed url', (
   assert.equal(themedUrl({}), NEWSROOM_URL + '?embed=hermes');
 });
 
-test('the address is configurable, and only a loopback one is accepted', async () => {
-  const {newsroomUrl} = await import('../desktop/plugin.js');
+test('the address is configurable, and only a loopback one is accepted', () => {
   // Default when nothing is configured.
   assert.equal(newsroomUrl({}), NEWSROOM_URL);
   // A different port is what most people will need.
@@ -73,4 +73,66 @@ test('setup guidance names every platform, not just systemd', async () => {
   assert.match(html, /hermes-newsroom/);
   assert.match(html, /macOS|Windows/);
   assert.doesNotMatch(html, /omarchy-command-center\.service/);
+});
+
+test('a refused address is reported as refused, never as the default being down', () => {
+  const store = {[SETTING]: 'http://100.101.102.103:3520/newsroom'};
+  const r = resolveNewsroomUrl(store);
+  assert.equal(r.url, NEWSROOM_URL);
+  assert.equal(r.privateHost, false);
+  assert.deepEqual(r.refused, {value: store[SETTING], reason: 'not-loopback', expectedAllow: 'http://100.101.102.103:3520'});
+  const text = refusalText(r.refused);
+  assert.match(text, /http:\/\/100\.101\.102\.103:3520\/newsroom/);
+  assert.match(text, /not a loopback host/);
+  assert.ok(text.includes(`set ${ALLOW_SETTING} to exactly http://100.101.102.103:3520`));
+  // Blocked storage and an empty key are not refusals: nothing was configured.
+  assert.equal(resolveNewsroomUrl({}).refused, undefined);
+  assert.equal(resolveNewsroomUrl({get [SETTING]() { throw new Error('blocked'); }}).refused, undefined);
+  assert.equal(resolveNewsroomUrl({[SETTING]: '   '}).refused, undefined);
+  assert.equal(resolveNewsroomUrl({[SETTING]: 'not a url'}).refused.reason, 'unreadable');
+  assert.equal(resolveNewsroomUrl({[SETTING]: 'javascript:alert(1)'}).refused.reason, 'not-http');
+  assert.equal(resolveNewsroomUrl({[SETTING]: 'file:///etc/passwd'}).refused.reason, 'not-http');
+});
+
+test('a private host is framed only when the allow key names its exact origin', () => {
+  const url = 'https://newsroom.tail1234.ts.net:3520/newsroom';
+  const ok = resolveNewsroomUrl({[SETTING]: url, [ALLOW_SETTING]: 'https://newsroom.tail1234.ts.net:3520'});
+  assert.deepEqual(ok, {url, privateHost: true});
+  assert.equal(newsroomUrl({[SETTING]: url, [ALLOW_SETTING]: 'https://newsroom.tail1234.ts.net:3520'}), url);
+  // A blanket value, another origin, a different scheme or port, or a path do not count.
+  for (const allow of ['1', 'true', '*', 'http://newsroom.tail1234.ts.net:3520', 'https://newsroom.tail1234.ts.net',
+                       'https://newsroom.tail1234.ts.net:3520/newsroom', 'https://other.tail1234.ts.net:3520']) {
+    const r = resolveNewsroomUrl({[SETTING]: url, [ALLOW_SETTING]: allow});
+    assert.equal(r.url, NEWSROOM_URL, allow);
+    assert.equal(r.refused?.reason, 'allow-mismatch', allow);
+    assert.match(refusalText(r.refused), /Set it to exactly https:\/\/newsroom\.tail1234\.ts\.net:3520/);
+  }
+  // The allow key never widens what a loopback address or a bad scheme may do.
+  assert.equal(resolveNewsroomUrl({[SETTING]: 'javascript:alert(1)', [ALLOW_SETTING]: 'javascript:'}).refused.reason, 'not-http');
+  assert.deepEqual(resolveNewsroomUrl({[SETTING]: 'http://localhost:3000/newsroom', [ALLOW_SETTING]: 'http://localhost:3000'}),
+    {url: 'http://localhost:3000/newsroom', privateHost: false});
+});
+
+test('the pane explains a refusal instead of naming the default address', () => {
+  const r = resolveNewsroomUrl({[SETTING]: 'http://10.0.0.5:3520/newsroom'});
+  const html = renderToStaticMarkup(h(NewsroomPage, {url: r.url, refused: r.refused}));
+  assert.doesNotMatch(html, /<iframe/, 'nothing is framed while the configuration is refused');
+  assert.doesNotMatch(html, /Nothing is serving Newsroom/);
+  assert.match(html, /role="alert"/);
+  assert.match(html, /http:\/\/10\.0\.0\.5:3520\/newsroom/);
+  assert.match(html, /not a loopback host/);
+  assert.ok(html.includes(ALLOW_SETTING));
+  assert.match(html, /to exactly http:\/\/10\.0\.0\.5:3520 and reload/, 'the exact allow value is spelled out');
+});
+
+test('an allowed private host is framed with the same sandbox and a visible notice', () => {
+  const url = 'http://100.101.102.103:3520/newsroom';
+  const html = renderToStaticMarkup(h(NewsroomPage, {url, privateHost: true}));
+  assert.match(html, /<iframe/);
+  assert.ok(html.includes(url + '?embed=hermes'));
+  assert.match(html, /sandbox="allow-scripts allow-same-origin allow-forms"/);
+  assert.match(html, /role="note"/);
+  assert.match(html, /Framed from another host, http:\/\/100\.101\.102\.103:3520/);
+  // The loopback default carries no such notice.
+  assert.doesNotMatch(renderToStaticMarkup(h(NewsroomPage, {})), /role="note"|Framed from another host/);
 });
