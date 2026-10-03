@@ -1,29 +1,89 @@
-import {createElement as h, useState, useRef, useCallback, useEffect} from 'react';
+import {createElement as h, Fragment, useState, useRef, useCallback, useEffect} from 'react';
 import {host, Button, Codicon, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA} from '@hermes/plugin-sdk';
 
 // Frames the Hermes Newsroom app (github.com/BkashJEE/hermes-newsroom) running on
-// this machine. The plugin holds no data and calls no backend of its own.
+// this machine, or on a private host the operator has named explicitly. The plugin
+// holds no data and calls no backend of its own.
 export const PAGE_PATH = '/newsroom';
 export const NEWSROOM_URL = 'http://127.0.0.1:3520/newsroom';
 export const SETTING = 'hermes-newsroom:url';
+export const ALLOW_SETTING = 'hermes-newsroom:allow-private-host';
 
-/** Read the configured address. A framed page is same-origin-privileged, so only
- *  a loopback http(s) address is accepted; anything else falls back to the default. */
+/** @param {unknown} store @param {string} key */
+function readSetting(store, key) {
+  const raw = typeof store?.getItem === 'function' ? store.getItem(key) : store?.[key];
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/** @param {URL} url */
+function isLoopback(url) {
+  return url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
+}
+
+/**
+ * Decide which address to frame, and say why when a configured one is not used.
+ *
+ * A framed page is same-origin-privileged, so by default only a loopback http(s)
+ * address is accepted. A non-loopback address is framed only when a second key,
+ * ALLOW_SETTING, holds that address's exact origin (scheme://host:port). Tying the
+ * opt-in to one origin means a later change of SETTING cannot ride on an earlier
+ * approval: the operator has to name each host they trust.
+ *
+ * @param {unknown} [store]
+ * @returns {{url: string, privateHost: boolean,
+ *            refused?: {value: string, reason: 'unreadable'|'not-http'|'not-loopback'|'allow-mismatch', expectedAllow?: string}}}
+ */
+export function resolveNewsroomUrl(store = globalThis.localStorage) {
+  let raw, allow;
+  try {
+    raw = readSetting(store, SETTING);
+    allow = readSetting(store, ALLOW_SETTING);
+  } catch {
+    return {url: NEWSROOM_URL, privateHost: false};   // private mode, blocked storage
+  }
+  if (!raw) return {url: NEWSROOM_URL, privateHost: false};
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return {url: NEWSROOM_URL, privateHost: false, refused: {value: raw, reason: 'unreadable'}};
+  }
+  if (!/^https?:$/.test(url.protocol)) {
+    return {url: NEWSROOM_URL, privateHost: false, refused: {value: raw, reason: 'not-http'}};
+  }
+  if (isLoopback(url)) return {url: url.href, privateHost: false};
+  if (!allow) {
+    return {url: NEWSROOM_URL, privateHost: false, refused: {value: raw, reason: 'not-loopback', expectedAllow: url.origin}};
+  }
+  if (allow !== url.origin) {
+    return {url: NEWSROOM_URL, privateHost: false, refused: {value: raw, reason: 'allow-mismatch', expectedAllow: url.origin}};
+  }
+  return {url: url.href, privateHost: true};
+}
+
+/** The address to frame. Kept for callers that only need the string. */
 export function newsroomUrl(store = globalThis.localStorage) {
-  let raw;
-  try {
-    raw = typeof store?.getItem === 'function' ? store.getItem(SETTING) : store?.[SETTING];
-  } catch {
-    return NEWSROOM_URL;                     // private mode, blocked storage
+  return resolveNewsroomUrl(store).url;
+}
+
+/** One sentence explaining a refusal, plus the way to allow it when there is one.
+ * @param {NonNullable<ReturnType<typeof resolveNewsroomUrl>['refused']>} refused */
+export function refusalText(refused) {
+  const {value, reason, expectedAllow} = refused;
+  switch (reason) {
+    case 'unreadable':
+      return `The configured address ${value} (${SETTING}) is not a valid URL, so it was not used.`;
+    case 'not-http':
+      return `The configured address ${value} (${SETTING}) was refused: only http: or https: addresses can be framed.`;
+    case 'not-loopback':
+      return `The configured address ${value} (${SETTING}) was refused because it is not a loopback host. `
+        + `The frame runs with same-origin privileges, so a host off this machine must be allowed explicitly: `
+        + `set ${ALLOW_SETTING} to exactly ${expectedAllow} and reload. Only do this for a private tailnet or LAN host you control.`;
+    case 'allow-mismatch':
+      return `The configured address ${value} (${SETTING}) was refused: ${ALLOW_SETTING} is set, but not to that address's origin. `
+        + `Set it to exactly ${expectedAllow} and reload.`;
   }
-  if (!raw) return NEWSROOM_URL;
-  try {
-    const url = new URL(raw);
-    const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]';
-    return /^https?:$/.test(url.protocol) && loopback ? url.href : NEWSROOM_URL;
-  } catch {
-    return NEWSROOM_URL;
-  }
+  return `The configured address ${value} (${SETTING}) was refused.`;
 }
 
 /** The origin to post the theme to, derived from whichever address is in use. */
@@ -88,8 +148,14 @@ export function themedUrl(theme, url = NEWSROOM_URL) {
   return `${url}?${params.toString()}`;
 }
 
-/** @param {{url?:string,failed?:boolean}} props */
-export function NewsroomPage({url = newsroomUrl(), failed: initiallyFailed = false}) {
+/** @param {{url?:string,failed?:boolean,privateHost?:boolean,
+ *            refused?:ReturnType<typeof resolveNewsroomUrl>['refused']}} props */
+export function NewsroomPage({url, failed: initiallyFailed = false, privateHost, refused}) {
+  // Resolve once per mount, so the frame, the notice and the theme target agree.
+  const [resolved] = useState(() => (url === undefined ? resolveNewsroomUrl() : null));
+  if (url === undefined) url = resolved.url;
+  if (privateHost === undefined) privateHost = resolved?.privateHost ?? false;
+  if (refused === undefined) refused = resolved?.refused;
   const [nonce, setNonce] = useState(0);
   const [failed, setFailed] = useState(initiallyFailed);
   const frame = useRef(/** @type {HTMLIFrameElement|null} */ (null));
@@ -125,8 +191,17 @@ export function NewsroomPage({url = newsroomUrl(), failed: initiallyFailed = fal
       observer.disconnect();
     };
   }, [nonce]);
+  const noteStyle = {margin: 0, padding: '6px 16px', fontSize: '12px', lineHeight: 1.5,
+    color: 'var(--ui-text-secondary)', borderBottom: '1px solid var(--ui-stroke-secondary)'};
   return h('div', {style: {display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--ui-bg-base)'}},
-    failed
+    refused
+      ? h('div', {role: 'alert', style: {padding: '18px 16px', fontSize: '13px', lineHeight: 1.6, color: 'var(--ui-text-primary)'}},
+          h('p', {style: {margin: '0 0 6px', fontWeight: 600}}, 'Newsroom was not opened.'),
+          h('p', {style: {margin: '0 0 10px'}}, refusalText(refused)),
+          h('p', {style: {margin: '0 0 10px', fontSize: '12px'}},
+            `To go back to the default (${NEWSROOM_URL}), remove ${SETTING} from this window's local storage, then Reload.`),
+          h(Button, {variant: 'outline', size: 'sm', onClick: reload}, 'Reload'))
+    : failed
       ? h('div', {role: 'alert', style: {padding: '18px 16px', fontSize: '13px', lineHeight: 1.6, color: 'var(--ui-text-primary)'}},
           h('p', {style: {margin: '0 0 6px', fontWeight: 600}}, `Nothing is serving Newsroom at ${url}.`),
           h('p', {style: {margin: '0 0 6px'}}, 'Newsroom is a separate local app. Install and start it once, on Linux, macOS or Windows:'),
@@ -137,7 +212,10 @@ export function NewsroomPage({url = newsroomUrl(), failed: initiallyFailed = fal
           h('p', {style: {margin: '0 0 10px', fontSize: '12px'}},
             `Using a different port? Set ${SETTING} in this window's local storage to that address, then Reload.`),
           h(Button, {variant: 'outline', size: 'sm', onClick: reload}, 'Reload'))
-      : h('iframe', {
+      : h(Fragment, null,
+          privateHost && h('p', {role: 'note', style: noteStyle},
+            `Framed from another host, ${newsroomOrigin(url)}, allowed by ${ALLOW_SETTING}.`),
+          h('iframe', {
           key: nonce,
           ref: frame,
           src,
@@ -146,7 +224,7 @@ export function NewsroomPage({url = newsroomUrl(), failed: initiallyFailed = fal
           // Local-only page: no downloads, popups, or top-level navigation out of the frame.
           sandbox: 'allow-scripts allow-same-origin allow-forms',
           style: {flex: 1, width: '100%', border: 0, background: 'var(--ui-bg-base)'},
-        }));
+        })));
 }
 
 function NewsroomStatus() {

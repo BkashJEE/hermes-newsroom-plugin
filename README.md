@@ -5,7 +5,8 @@ Hermes Desktop app: a sidebar entry, a status-bar launcher and two command-palet
 actions. The page picks up your Hermes theme and follows it when you switch.
 
 The plugin is one file. It holds no data, has no backend, and stores nothing. It
-frames the Newsroom app running on your own machine.
+frames the Newsroom app running on your own machine, or, if you say so
+explicitly, on a private host you control.
 
 ## Install
 
@@ -58,10 +59,59 @@ a window reload. "Newsroom" then appears in the sidebar.
 ## A different port
 
 Newsroom is expected at `http://127.0.0.1:3520/newsroom`. To point the plugin
-somewhere else, set `hermes-newsroom:url` in the Desktop window's local storage
-to that address and reload the page. Only loopback `http(s)` addresses are
-accepted: the frame runs with same-origin privileges, so it must never be aimed
-off your machine.
+somewhere else on this machine, set `hermes-newsroom:url` in the Desktop window's
+local storage to that address and reload the page. Only loopback `http(s)`
+addresses are accepted without further steps.
+
+## A Newsroom on another machine
+
+By default the plugin refuses to frame anything that is not on `127.0.0.1`,
+`localhost` or `[::1]`, and the pane says so, naming the address it refused. The
+reason is the frame itself: it is created with
+`sandbox="allow-scripts allow-same-origin allow-forms"`. `allow-same-origin` is
+what lets the Newsroom page keep its own cookies and storage and talk to its own
+API, but it also means the framed page runs with the full privileges of its
+origin inside the Desktop window. Aimed at a host you do not control, that is a
+foothold; aimed at your own machine, it is fine.
+
+If Newsroom runs on a **private host you control** (a tailnet peer, a LAN box),
+you can opt in per origin. Two keys are needed, and the second must spell out the
+exact origin of the first (`scheme://host:port`, no path):
+
+| key | value |
+| --- | --- |
+| `hermes-newsroom:url` | the full address, e.g. `http://100.101.102.103:3520/newsroom` |
+| `hermes-newsroom:allow-private-host` | that address's origin, e.g. `http://100.101.102.103:3520` |
+
+The allow key names one origin rather than switching the check off, so a later
+change of `hermes-newsroom:url` to some other host is refused again until you
+name that host too. A blanket value such as `1` does nothing. The sandbox is the
+same as for loopback, and the pane shows a one-line note that the page is framed
+from another host.
+
+From the Desktop window's developer tools console (in most Electron apps:
+`Ctrl+Shift+I`, or `Cmd+Option+I` on macOS; otherwise the View or Help menu):
+
+```js
+localStorage.setItem('hermes-newsroom:url', 'http://100.101.102.103:3520/newsroom');
+localStorage.setItem('hermes-newsroom:allow-private-host', 'http://100.101.102.103:3520');
+```
+
+Then reload the page (or restart the Desktop app) and open Newsroom. To go back:
+
+```js
+localStorage.removeItem('hermes-newsroom:allow-private-host');
+localStorage.removeItem('hermes-newsroom:url');
+```
+
+Do not do this for a host reachable from the public internet. If you only need
+the page and not a remote origin, a loopback forward keeps the default rule
+intact: `ssh -L 3520:127.0.0.1:3520 <host>` on the Desktop machine, then leave
+`hermes-newsroom:url` unset.
+
+Note that Newsroom itself talks to a Hermes API gateway on *its* machine; framing
+it from elsewhere does not change that (see
+[hermes-newsroom#5](https://github.com/BkashJEE/hermes-newsroom/issues/5)).
 
 ## Theme bridge
 
