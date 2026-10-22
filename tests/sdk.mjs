@@ -5,6 +5,8 @@ import {createElement} from 'react';
 export const ROUTES_AREA = 'routes';
 export const SIDEBAR_NAV_AREA = 'sidebar.nav';
 export const PALETTE_AREA = 'palette';
+// Matches apps/desktop/src/contrib/settings-pages.ts in Hermes.
+export const SETTINGS_PLUGINS_AREA = 'settings.plugins';
 
 const atom = initial => {
   let value = initial;

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {createElement as h} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import * as jsdom from 'jsdom';
-import plugin, {NewsroomPage, NEWSROOM_URL, PAGE_PATH, SETTING, ALLOW_SETTING, hermesTheme, themedUrl,
-  newsroomUrl, resolveNewsroomUrl, refusalText} from '../desktop/plugin.js';
-import {ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA} from './sdk.mjs';
+import plugin, {NewsroomPage, NewsroomSettings, NEWSROOM_URL, PAGE_PATH, SETTING, ALLOW_SETTING,
+  hermesTheme, themedUrl, newsroomUrl, resolveNewsroomUrl, refusalText} from '../desktop/plugin.js';
+import {ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA, SETTINGS_PLUGINS_AREA} from './sdk.mjs';
 
 test('registers a page, sidebar entry, status-bar launcher and palette command', () => {
   const got = [];
@@ -135,4 +135,49 @@ test('an allowed private host is framed with the same sandbox and a visible noti
   assert.match(html, /Framed from another host, http:\/\/100\.101\.102\.103:3520/);
   // The loopback default carries no such notice.
   assert.doesNotMatch(renderToStaticMarkup(h(NewsroomPage, {})), /role="note"|Framed from another host/);
+});
+
+test('contributes a settings page, so the address is not set through devtools', () => {
+  const got = [];
+  plugin.register({register: c => got.push(c), registerMany: l => l.forEach(c => got.push(c))});
+  const page = got.find(c => c.area === SETTINGS_PLUGINS_AREA);
+  assert.ok(page, 'must register in Settings ▸ Plugins');
+  assert.equal(page.data.title, 'Newsroom');
+  assert.equal(typeof page.data.render, 'function', 'the page has to render something');
+});
+
+test('the settings panel shows the address in use and any refusal', () => {
+  const dom = new jsdom.JSDOM('', {url: 'https://hermes.test/'});
+  const previous = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', {value: dom.window.localStorage, configurable: true});
+  try {
+    // A refused address must explain itself here rather than only on the page.
+    dom.window.localStorage.setItem(SETTING, 'https://newsroom.example.com:3520/newsroom');
+    const refused = renderToStaticMarkup(h(NewsroomSettings, {}));
+    assert.match(refused, /not-loopback/);
+    assert.ok(refused.includes(NEWSROOM_URL), 'says what it is framing instead');
+
+    dom.window.localStorage.setItem(SETTING, 'http://127.0.0.1:3521/newsroom');
+    const accepted = renderToStaticMarkup(h(NewsroomSettings, {}));
+    assert.ok(accepted.includes('http://127.0.0.1:3521/newsroom'));
+    assert.ok(!accepted.includes('not-loopback'));
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', {value: previous, configurable: true});
+  }
+});
+
+test('a window with blocked storage renders the panel instead of throwing', () => {
+  const previous = globalThis.localStorage;
+  const blocked = {
+    getItem() { throw new Error('denied'); },
+    setItem() { throw new Error('denied'); },
+    removeItem() { throw new Error('denied'); },
+  };
+  Object.defineProperty(globalThis, 'localStorage', {value: blocked, configurable: true});
+  try {
+    const html = renderToStaticMarkup(h(NewsroomSettings, {}));
+    assert.ok(html.includes(NEWSROOM_URL), 'falls back to the default address');
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', {value: previous, configurable: true});
+  }
 });
