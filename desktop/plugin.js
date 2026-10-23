@@ -1,5 +1,6 @@
 import {createElement as h, Fragment, useState, useRef, useCallback, useEffect} from 'react';
-import {host, Button, Codicon, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA} from '@hermes/plugin-sdk';
+import {host, Button, Codicon, ROUTES_AREA, SIDEBAR_NAV_AREA, PALETTE_AREA,
+        SETTINGS_PLUGINS_AREA} from '@hermes/plugin-sdk';
 
 // Frames the Hermes Newsroom app (github.com/BkashJEE/hermes-newsroom) running on
 // this machine, or on a private host the operator has named explicitly. The plugin
@@ -13,6 +14,14 @@ export const ALLOW_SETTING = 'hermes-newsroom:allow-private-host';
 function readSetting(store, key) {
   const raw = typeof store?.getItem === 'function' ? store.getItem(key) : store?.[key];
   return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/** @param {unknown} store @param {string} key @param {string} value */
+function writeSetting(store, key, value) {
+  // Blocked or private-mode storage throws; the panel reports it rather than
+  // pretending the address was saved.
+  if (value) store.setItem(key, value);
+  else store.removeItem(key);
 }
 
 /** @param {URL} url */
@@ -235,6 +244,74 @@ function NewsroomStatus() {
   }, h(Codicon, {name: 'radio-tower'}), 'Newsroom');
 }
 
+/**
+ * Settings ▸ Plugins ▸ Newsroom.
+ *
+ * The address used to be reachable only by typing into the Desktop devtools
+ * console, which is not a thing to ask of anyone. Hermes gives each plugin a
+ * settings page, so the address is set where settings live.
+ *
+ * Saving writes the same two keys the frame already reads, and the panel shows
+ * the resolution immediately — including a refusal and the reason for it, so a
+ * rejected address explains itself here rather than on the page.
+ */
+export function NewsroomSettings() {
+  const [value, setValue] = useState(() => {
+    try {
+      return readSetting(globalThis.localStorage, SETTING);
+    } catch {
+      return '';
+    }
+  });
+  const [allow, setAllow] = useState(() => {
+    try {
+      return readSetting(globalThis.localStorage, ALLOW_SETTING);
+    } catch {
+      return '';
+    }
+  });
+  const [saved, setSaved] = useState(null);
+  const resolved = resolveNewsroomUrl();
+
+  const save = useCallback(() => {
+    try {
+      writeSetting(globalThis.localStorage, SETTING, value.trim());
+      writeSetting(globalThis.localStorage, ALLOW_SETTING, allow.trim());
+      setSaved('Saved. Reload the Newsroom page to use it.');
+    } catch {
+      setSaved('This window cannot save settings; its storage is blocked.');
+    }
+  }, [value, allow]);
+
+  return h('div', {style: {display: 'grid', gap: '12px', maxWidth: '560px'}},
+    h('p', {style: {margin: 0, opacity: 0.8}},
+      'The address of the Newsroom app running on this machine. Leave it empty to use ',
+      h('code', null, NEWSROOM_URL),
+      '.'),
+    h('label', {style: {display: 'grid', gap: '4px'}},
+      h('span', {style: {fontSize: '12px', opacity: 0.7}}, 'Newsroom address'),
+      h('input', {
+        type: 'url', value, placeholder: NEWSROOM_URL, spellCheck: false,
+        onChange: e => { setValue(e.target.value); setSaved(null); },
+        style: {padding: '6px 8px', font: 'inherit'},
+      })),
+    h('label', {style: {display: 'grid', gap: '4px'}},
+      h('span', {style: {fontSize: '12px', opacity: 0.7}},
+        'Allow a private host (exact scheme://host:port, only if the address above is not loopback)'),
+      h('input', {
+        type: 'text', value: allow, placeholder: 'https://newsroom.example.ts.net:3520', spellCheck: false,
+        onChange: e => { setAllow(e.target.value); setSaved(null); },
+        style: {padding: '6px 8px', font: 'inherit'},
+      })),
+    h('div', null, h(Button, {onClick: save}, 'Save')),
+    saved ? h('p', {style: {margin: 0, opacity: 0.8}}, saved) : null,
+    h('p', {style: {margin: 0, fontSize: '12px', opacity: 0.7}},
+      resolved.refused
+        ? `Currently refusing ${resolved.refused.value} (${resolved.refused.reason}); framing ${resolved.url}.`
+        : `Currently framing ${resolved.url}.`),
+  );
+}
+
 export default {
   id: 'hermes-newsroom', name: 'Hermes Newsroom', defaultEnabled: true,
   description: 'Opens the local Hermes Newsroom command center inside Hermes Desktop.',
@@ -244,6 +321,9 @@ export default {
       {id: 'page', area: ROUTES_AREA, data: {path: PAGE_PATH}, render: () => h(NewsroomPage, {})},
       {id: 'nav', area: SIDEBAR_NAV_AREA, order: 55, data: {codicon: 'radio-tower', label: 'Newsroom', path: PAGE_PATH}},
       {id: 'status', area: 'statusBar.left', render: () => h(NewsroomStatus, {})},
+      {id: 'settings', area: SETTINGS_PLUGINS_AREA, data: {
+        id: 'main', title: 'Newsroom', icon: 'radio-tower', render: () => h(NewsroomSettings, {}),
+      }},
       {id: 'open', area: PALETTE_AREA, data: {
         id: 'hermes-newsroom.open', label: 'Newsroom: Open',
         keywords: ['newsroom', 'news', 'command center', 'hermes daily'],

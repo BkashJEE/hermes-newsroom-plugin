@@ -59,9 +59,15 @@ a window reload. "Newsroom" then appears in the sidebar.
 ## A different port
 
 Newsroom is expected at `http://127.0.0.1:3520/newsroom`. To point the plugin
-somewhere else on this machine, set `hermes-newsroom:url` in the Desktop window's
-local storage to that address and reload the page. Only loopback `http(s)`
-addresses are accepted without further steps.
+somewhere else on this machine, open **Settings ▸ Plugins ▸ Newsroom**, enter the
+address and save. The panel shows which address is in use, and names any address
+it is refusing and why. Reload the Newsroom page afterwards.
+
+Only loopback `http(s)` addresses are accepted without further steps.
+
+The setting is stored as `hermes-newsroom:url` in the Desktop window's local
+storage, so an earlier install configured from the devtools console keeps
+working; the settings page writes the same key.
 
 ## A Newsroom on another machine
 
